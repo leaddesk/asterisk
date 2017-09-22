@@ -35,3 +35,6 @@ latex
 doxygen.log
 out/
 
+libresample-trunk/
+nbs-trunk/
+*.sublime-*

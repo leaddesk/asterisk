@@ -52,6 +52,7 @@ ASTERISK_FILE_VERSION(__FILE__, "$Revision$")
 
 AST_THREADSTORAGE(sql_buf);
 AST_THREADSTORAGE(rowdata_buf);
+AST_THREADSTORAGE(database_readonly_buf);
 
 struct custom_prepare_struct {
 	const char *sql;
@@ -145,11 +146,45 @@ static SQLHSTMT custom_prepare(struct odbc_obj *obj, void *data)
 			ENCODE_CHUNK(encodebuf, newval);
 			ast_string_field_set(cps, encoding[x], encodebuf);
 			newval = cps->encoding[x];
-		} 
+		}
 		SQLBindParameter(stmt, x++, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_CHAR, strlen(newval), 0, (void *)newval, 0, NULL);
 	}
 
 	return stmt;
+}
+
+/*!
+ * \brief Get readonly database handle
+ * \param database
+ * \param flags
+ *
+ * \retval obj on success
+ * \retval NULL on failure
+ */
+static struct odbc_obj *get_readonly_database(const char *database, const struct ast_flags flags)
+{
+	struct odbc_obj *obj;
+	struct ast_str *database_readonly = ast_str_thread_get(&database_readonly_buf, strlen(database) + 10);
+
+	if (!database_readonly) {
+		return NULL;
+	}
+
+	ast_str_reset(database_readonly);
+	ast_str_set(&database_readonly, 0, "%s_readonly", database);
+	obj = ast_odbc_request_obj2(ast_str_buffer(database_readonly), flags);
+	if (!obj) {
+		obj = ast_odbc_request_obj2(database, flags);
+		if (!obj) {
+			ast_log(LOG_ERROR, "No database handle available with the name of '%s' or '%s' (check res_odbc.conf)\n", database, ast_str_buffer(database_readonly));
+			return NULL;
+		} else {
+			ast_log(LOG_NOTICE, "No readonly database handle available with name of '%s', using handle with name '%s'\n", ast_str_buffer(database_readonly), database);
+		}
+	} else {
+		ast_log(LOG_DEBUG, "Using readonly database handle with name '%s'\n", ast_str_buffer(database_readonly));
+	}
+	return obj;
 }
 
 /*!
@@ -192,13 +227,10 @@ static struct ast_variable *realtime_odbc(const char *database, const char *tabl
 	if (!table || !field || !sql || !rowdata) {
 		return NULL;
 	}
-
-	obj = ast_odbc_request_obj2(database, connected_flag);
+	obj = get_readonly_database(database, connected_flag);
 	if (!obj) {
-		ast_log(LOG_ERROR, "No database handle available with the name of '%s' (check res_odbc.conf)\n", database);
 		return NULL;
 	}
-
 	op = !strchr(field->name, ' ') ? " =" : "";
 	ast_str_set(&sql, 0, "SELECT * FROM %s WHERE %s%s ?%s", table, field->name, op,
 		strcasestr(field->name, "LIKE") && !ast_odbc_backslash_is_escape(obj) ? " ESCAPE '\\\\'" : "");
@@ -245,7 +277,7 @@ static struct ast_variable *realtime_odbc(const char *database, const char *tabl
 	for (x = 0; x < colcount; x++) {
 		colsize = 0;
 		collen = sizeof(coltitle);
-		res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen, 
+		res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen,
 					&datatype, &colsize, &decimaldigits, &nullable);
 		if ((res != SQL_SUCCESS) && (res != SQL_SUCCESS_WITH_INFO)) {
 			ast_log(LOG_WARNING, "SQL Describe Column error! [%s]\n", ast_str_buffer(sql));
@@ -315,7 +347,7 @@ static struct ast_variable *realtime_odbc(const char *database, const char *tabl
  * \param ap list containing one or more field/operator/value set.
  *
  * Select database and preform query on table, prepare the sql statement
- * Sub-in the values to the prepared statement and execute it. 
+ * Sub-in the values to the prepared statement and execute it.
  * Execute this prepared query against several ODBC connected databases.
  * Return results as an ast_config variable.
  *
@@ -353,7 +385,7 @@ static struct ast_config *realtime_multi_odbc(const char *database, const char *
 		return NULL;
 	}
 
-	obj = ast_odbc_request_obj2(database, connected_flag);
+	obj = get_readonly_database(database, connected_flag);
 	if (!obj) {
 		return NULL;
 	}
@@ -416,7 +448,7 @@ static struct ast_config *realtime_multi_odbc(const char *database, const char *
 		for (x=0;x<colcount;x++) {
 			colsize = 0;
 			collen = sizeof(coltitle);
-			res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen, 
+			res = SQLDescribeCol(stmt, x + 1, (unsigned char *)coltitle, sizeof(coltitle), &collen,
 						&datatype, &colsize, &decimaldigits, &nullable);
 			if ((res != SQL_SUCCESS) && (res != SQL_SUCCESS_WITH_INFO)) {
 				ast_log(LOG_WARNING, "SQL Describe Column error! [%s]\n", ast_str_buffer(sql));
@@ -1015,7 +1047,7 @@ static struct ast_config *config_odbc(const char *database, const char *table, c
 				return NULL;
 			}
 			continue;
-		} 
+		}
 		if (strcmp(last, q.category) || last_cat_metric != q.cat_metric) {
 			cur_cat = ast_category_new_dynamic(q.category);
 			if (!cur_cat) {
