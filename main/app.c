@@ -358,10 +358,6 @@ int ast_app_exec_macro(struct ast_channel *autoservice_chan, struct ast_channel 
 		ast_autoservice_stop(autoservice_chan);
 	}
 
-	if (ast_check_hangup_locked(macro_chan)) {
-		ast_queue_hangup(macro_chan);
-	}
-
 	return res;
 }
 
@@ -437,10 +433,6 @@ int ast_app_exec_sub(struct ast_channel *autoservice_chan, struct ast_channel *s
 
 	if (autoservice_chan) {
 		ast_autoservice_stop(autoservice_chan);
-	}
-
-	if (!ignore_hangup && ast_check_hangup_locked(sub_chan)) {
-		ast_queue_hangup(sub_chan);
 	}
 
 	return res;
